@@ -1,0 +1,20 @@
+# The aio framework — a symlink into the local install, made by `am pin`.
+dep/
+
+# GNU Midnight Commander's source, read by the parity tests as a
+# specification. Not ours, not MIT, and not needed to run mcx:
+#   git clone --depth 1 https://github.com/MidnightCommander/mc
+dep/mc/
+/mc/
+
+# Build output
+dist/
+rust/*/target/
+node_modules/
+
+# Runtime profile (mcx keeps everything in ~/.mcx)
+.mcx/
+
+# Editors and OS
+.DS_Store
+*.swp

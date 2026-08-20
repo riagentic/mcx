@@ -1,0 +1,17 @@
+[package]
+name = "mcx-core"
+version = "0.1.0"
+edition = "2021"
+description = "Performance-critical core for mcx: listing sort, glob match, content search, line index."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
