@@ -149,7 +149,7 @@ if (import.meta.main) {
         for (let i = 0; i < KEYSTROKES; i++) {
           derive({
             all: listing,
-            marked: [],
+            markedNames: [],
             cursor: i * 37 % listing.length,
             offset: 0,
             viewport: 40,

@@ -143,7 +143,7 @@ export const ops = cell("ops", {
 
     /** C-x e — read the ext2 attributes of the file under the cursor, so the
      *  dialog can open on what they are now. */
-    async attrsOf(s: OpsState, name: string): Promise<string> {
+    async attrsOf(_s: OpsState, name: string): Promise<string> {
       const p = panels.activePanel();
       const io = await import("./ops.server.ts");
       const r = await io.readAttrs(entryPath(p.path, name));

@@ -54,7 +54,7 @@ export const shell = cell("shell", {
      *  2. Otherwise, if the file is executable, run it.
      *  3. Otherwise nothing — mc does nothing here, and inventing an action
      *     (opening the viewer, say) would surprise the muscle memory. */
-    async openFile(s: ShellState, path: string, executable: boolean) {
+    async openFile(_s: ShellState, path: string, executable: boolean) {
       const cfg = await import("./profile.server.ts");
       const io = await import("./shell.server.ts");
       const name = path.slice(path.lastIndexOf("/") + 1);
@@ -80,7 +80,7 @@ export const shell = cell("shell", {
         ui.say(`${assoc.section}: ${command}`);
         // Detached: an association usually starts something with a window of
         // its own, and waiting for it would freeze the panel behind it.
-        await io.spawnDetached(command, dir);
+        io.spawnDetached(command, dir);
         return;
       }
 
@@ -95,7 +95,7 @@ export const shell = cell("shell", {
     /** M-! — run a command and show what it printed in the viewer. mc writes
      *  the output to a temp file and views that; so does this, which is what
      *  gets search, hex and a 2 GB result for free. */
-    async viewOutput(s: ShellState, command: string, cwd: string) {
+    async viewOutput(_s: ShellState, command: string, cwd: string) {
       const cmd = command.trim();
       if (!cmd) return;
       ui.remember(cmd);
@@ -110,7 +110,7 @@ export const shell = cell("shell", {
     /** C-x ! — run a command and put the filenames it printed in the panel
      *  (mc's "External panelize"). Relative names resolve against the panel's
      *  directory, which is where the command ran. */
-    async panelizeOutput(s: ShellState, command: string, cwd: string) {
+    async panelizeOutput(_s: ShellState, command: string, cwd: string) {
       const cmd = command.trim();
       if (!cmd) return;
       ui.remember(cmd);
@@ -131,7 +131,7 @@ export const shell = cell("shell", {
     },
 
     async exec(
-      s: ShellState & Partial<MethodDraftMeta>,
+      s: ShellState & MethodDraftMeta,
       command: string,
       cwd: string,
     ) {
@@ -164,6 +164,8 @@ export const shell = cell("shell", {
         s.lines = [...s.lines, ...pending].slice(-MAX_LINES);
         pending = [];
       };
+      // aio-ok: a flush timer scoped to this call, cleared in `finally` — not a
+      // schedule other code could observe or cancel.
       const timer = setInterval(flush, 80);
 
       try {
@@ -175,7 +177,7 @@ export const shell = cell("shell", {
           cmd,
           cwd,
           (l) => pending.push(l),
-          s.$signal!,
+          s.$signal,
         );
         if (persistent) {
           s.exitCode = persistent.code;
@@ -189,7 +191,7 @@ export const shell = cell("shell", {
             cmd,
             cwd,
             (l) => pending.push(l),
-            s.$signal!,
+            s.$signal,
           );
         }
       } catch (e) {
@@ -204,6 +206,7 @@ export const shell = cell("shell", {
         s.running = false;
       }
 
+      // aio-ok: reading back this call's own write.
       if (s.exitCode !== 0) ui.say(`Exit ${s.exitCode}`);
       await panels.reload(panels.active);
     },

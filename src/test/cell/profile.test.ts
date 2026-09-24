@@ -9,7 +9,7 @@ async function withProfile(
   fn: (
     home: string,
     io: typeof import("../../cell/profile.server.ts"),
-  ) => Promise<void>,
+  ) => void | Promise<void>,
 ): Promise<void> {
   const root = await Deno.makeTempDir({ prefix: "mcx-profile-" });
   const old = Deno.env.get("AIO_APPS_DIR");
@@ -72,7 +72,7 @@ Deno.test("the seeded menu is a menu that parses and applies", () =>
   }));
 
 Deno.test("a .mcx.menu beside the files wins over the profile's", () =>
-  withProfile(async (home, io) => {
+  withProfile(async (_home, io) => {
     await io.ensureProfile();
     const dir = await Deno.makeTempDir({ prefix: "mcx-project-" });
     await Deno.writeTextFile(
@@ -96,7 +96,7 @@ Deno.test("associations come from the profile and match by suffix and pattern", 
   }));
 
 Deno.test("ext.ini speaks mc's whole dialect, so mc's own file can be copied in", () =>
-  withProfile(async (_home, io) => {
+  withProfile((_home, io) => {
     const list = io.parseExt(`
 [Include/archive]
 Open=extract %f
@@ -138,7 +138,7 @@ Open=xdg-open %f
   }));
 
 Deno.test("an Include that points at itself is a hang, so it is bounded", () =>
-  withProfile(async (_home, io) => {
+  withProfile((_home, io) => {
     const list = io.parseExt(`
 [Include/a]
 Include=b

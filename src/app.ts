@@ -30,11 +30,10 @@ import "./cell/tree.ts";
 import "./cell/diff.ts";
 import { aio } from "aio";
 
+// The appId lives in deno.json alone: dev, `am` and the compiled binary (which
+// embeds deno.json) all resolve the same id from it, so the data directory
+// cannot move between a dev run and a build.
 await aio.run({
-  // Declared HERE, not only in deno.json: a compiled binary never reads
-  // deno.json, and an appId that changes between dev and the build moves the
-  // data directory with it (docs/basics/pitfalls.md).
-  appId: "mcx",
   ui: { width: 1280, height: 800 },
   onStart: () => {
     panels.boot();

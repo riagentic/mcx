@@ -69,7 +69,18 @@ type ViewerState = {
 
 const HEX_COLS = 16;
 
-/** Read the visible window.
+type Window = Pick<
+  ViewerState,
+  "lines" | "hex" | "line" | "knownLines" | "complete"
+>;
+
+/** The newest window read in flight. A held PgDn starts reads faster than the
+ *  disk answers them, and the answers need not arrive in order. */
+let windowSeq = 0;
+
+/** Read the visible window — or `null` once a newer read has started, so a
+ *  late answer can never paint a position the user has already left.
+ *  `Object.assign(s, null)` is a no-op, which keeps every call site one line.
  *
  *  A plain function, not a `refresh` METHOD the other methods call: a nested
  *  dispatch sees the caller's writes only after they commit, so a `refresh`
@@ -82,27 +93,25 @@ async function readWindow(
   viewport: number,
   nroff = false,
   changes: Record<number, number> = {},
-): Promise<
-  Pick<ViewerState, "lines" | "hex" | "line" | "knownLines" | "complete">
-> {
+): Promise<Window | null> {
+  const seq = ++windowSeq;
   const io = await import("./viewer.server.ts");
-  if (mode === "hex") {
-    return {
+  const w: Window = mode === "hex"
+    ? {
       lines: [],
       hex: await io.hexWindow(byte, viewport, changes),
       line,
       knownLines: 0,
       complete: true,
-    };
-  }
-  const w = await io.textWindow(line, viewport);
-  return {
-    lines: nroff ? w.lines.map(stripOverstrike) : w.lines,
-    hex: [],
-    line: w.first,
-    knownLines: w.known,
-    complete: w.complete,
-  };
+    }
+    : await io.textWindow(line, viewport).then((t) => ({
+      lines: nroff ? t.lines.map(stripOverstrike) : t.lines,
+      hex: [],
+      line: t.first,
+      knownLines: t.known,
+      complete: t.complete,
+    }));
+  return seq === windowSeq ? w : null;
 }
 
 /** Open a file in the viewer — the body of `open`, as a plain function, so
@@ -226,14 +235,14 @@ export const viewer = cell("viewer", {
 
     async close(s: ViewerState) {
       const io = await import("./viewer.server.ts");
-      await io.close();
+      io.close();
       s.visible = false;
       s.lines = [];
       s.hex = [];
     },
 
     /** Scroll by `delta` rows — lines in text mode, 16-byte rows in hex. */
-    async scroll(s: ViewerState, delta: number) {
+    async scroll(s: ViewerState, delta: number) { // aio-ok: reads the view as it is now; stale windows drop in readWindow
       if (!s.visible) return;
       if (s.mode === "hex") {
         const max = Math.max(0, s.size - 1);
@@ -266,7 +275,7 @@ export const viewer = cell("viewer", {
 
     /** End of file. In text mode this forces the index to complete — which is
      *  the honest cost of "show me the last line" and nothing more. */
-    async bottom(s: ViewerState) {
+    async bottom(s: ViewerState) { // aio-ok: reads the view as it is now; stale windows drop in readWindow
       const io = await import("./viewer.server.ts");
       if (s.mode === "hex") {
         s.byte = Math.max(0, s.size - s.viewport * HEX_COLS);
@@ -300,7 +309,7 @@ export const viewer = cell("viewer", {
     },
 
     /** F4 in mc's viewer, and here: swap between text and hex. */
-    async toggleMode(s: ViewerState) {
+    async toggleMode(s: ViewerState) { // aio-ok: reads the view as it is now; stale windows drop in readWindow
       if (!s.visible) return;
       const io = await import("./viewer.server.ts");
       if (s.mode === "text") {
@@ -360,7 +369,7 @@ export const viewer = cell("viewer", {
      *  byte under the cursor; in the text column it is the byte itself. Either
      *  way the cursor moves on when the byte is complete, which is what makes
      *  typing a run of bytes possible. */
-    async typeHex(s: ViewerState, key: string) {
+    async typeHex(s: ViewerState, key: string) { // aio-ok: reads the view as it is now; stale windows drop in readWindow
       if (!s.hexEdit || s.mode !== "hex" || s.size === 0) return;
       const at = s.hexCursor;
       const current = s.changes[at] ??
@@ -402,13 +411,19 @@ export const viewer = cell("viewer", {
 
     /** F6 — write the pending bytes. A hex edit never changes the length, so
      *  this is a seek and a write, even in a file too big to read. */
-    async saveHex(s: ViewerState) {
-      const pending = Object.keys(s.changes).length;
+    async saveHex(s: ViewerState) { // aio-ok: re-reads below are deliberate
+      // What gets written is fixed before the first await.
+      const written = { ...s.changes };
+      const { path } = s;
+      const pending = Object.keys(written).length;
       if (pending === 0) return void ui.say("Nothing to save");
       const io = await import("./viewer.server.ts");
-      const err = await io.writeBytes(s.path, s.changes);
+      const err = await io.writeBytes(path, written);
       if (err) return void ui.say(`Cannot save: ${err}`);
-      s.changes = {};
+      // A byte typed during the write is not on disk yet: it stays pending.
+      s.changes = Object.fromEntries(
+        Object.entries(s.changes).filter(([at, b]) => written[+at] !== b),
+      );
       ui.say(`Saved ${pending} byte${pending === 1 ? "" : "s"}`);
       Object.assign(
         s,
@@ -429,7 +444,7 @@ export const viewer = cell("viewer", {
     },
 
     /** M-e — read the same bytes as a different character set. */
-    async setCharset(s: ViewerState, label: string) {
+    async setCharset(s: ViewerState, label: string) { // aio-ok: reads the view as it is now; stale windows drop in readWindow
       if (!isCharset(label)) {
         return void ui.say(`Unknown character set: ${label}`);
       }
@@ -445,7 +460,7 @@ export const viewer = cell("viewer", {
     },
 
     /** F9 — nroff mode, for man pages. */
-    async toggleNroff(s: ViewerState) {
+    async toggleNroff(s: ViewerState) { // aio-ok: reads the view as it is now; stale windows drop in readWindow
       s.nroff = !s.nroff;
       ui.say(s.nroff ? "Nroff mode" : "Raw text");
       if (!s.visible) return;
@@ -464,7 +479,7 @@ export const viewer = cell("viewer", {
 
     /** C-f / C-b — the next or previous file in the panel, without going back
      *  to it. Browsing a directory of logs is the case this exists for. */
-    async stepFile(s: ViewerState, delta: number) {
+    async stepFile(_s: ViewerState, delta: number) {
       const { panels } = await import("./panels.ts");
       const next = await panels.neighbourFile(delta);
       if (!next) return void ui.say(delta > 0 ? "Last file" : "First file");
@@ -491,7 +506,7 @@ export const viewer = cell("viewer", {
     },
 
     /** mc's `m`: go back to it. */
-    async toMark(s: ViewerState) {
+    async toMark(s: ViewerState) { // aio-ok: reads the view as it is now; stale windows drop in readWindow
       if (!s.bookmark) return void ui.say("Nothing marked — press r first");
       s.line = s.bookmark.line;
       s.byte = s.bookmark.byte;
@@ -516,7 +531,7 @@ export const viewer = cell("viewer", {
       if (name === "wholeWords") s.wholeWords = on;
     },
 
-    async find(s: ViewerState, needle: string, backwards = false) {
+    async find(s: ViewerState, needle: string, backwards = false) { // aio-ok: reads the view as it is now; stale windows drop in readWindow
       if (!needle) return;
       s.search = needle;
       const io = await import("./viewer.server.ts");
@@ -570,7 +585,7 @@ export const viewer = cell("viewer", {
     },
 
     /** Jump to a line number, or to a percentage of the file. */
-    async goto(s: ViewerState, where: string) {
+    async goto(s: ViewerState, where: string) { // aio-ok: reads the view as it is now; stale windows drop in readWindow
       const io = await import("./viewer.server.ts");
       const text = where.trim();
       const pct = text.endsWith("%");

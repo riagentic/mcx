@@ -18,3 +18,12 @@ node_modules/
 # Editors and OS
 .DS_Store
 *.swp
+
+# aio runtime / local secrets (as `am create` scaffolds them)
+.aio/
+*.sqlite
+.env
+!.env.example
+release-key.json
+*-release-key.json
+*.release-key.json

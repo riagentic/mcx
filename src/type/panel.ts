@@ -42,8 +42,10 @@ export type PanelState = {
    *  than mc. */
   all: FileEntry[];
   /** Marked names. Server-side only, for the same reason (`select all` in a
-   *  huge tree). The UI reads `markedCount`/`markedBytes` and per-row flags. */
-  marked: string[];
+   *  huge tree). The UI reads `markedCount`/`markedBytes` and per-row flags.
+   *  Named apart from `RowView.marked` on purpose: a `visible.exclude` dot
+   *  path strips its field at EVERY depth under the panel, rows included. */
+  markedNames: string[];
 
   /** A panelized result set (mc's "Panelize"): when non-empty the panel shows
    *  THESE paths instead of a directory listing. Server-side only. */
@@ -106,7 +108,7 @@ export type PanelState = {
   markedCount: number;
   markedBytes: number;
   /** Name of the first marked file, `""` when nothing is marked. The client
-   *  never receives `marked`, and a dialog that says "Copy … to:" still has to
+   *  never receives `markedNames`, and a dialog that says "Copy … to:" still has to
    *  name the one file it is about. */
   markedFirst: string;
   totalBytes: number;

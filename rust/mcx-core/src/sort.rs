@@ -124,11 +124,6 @@ fn ext(name: &[u8]) -> &[u8] {
     }
 }
 
-#[inline]
-fn cmp_f64(a: f64, b: f64) -> core::cmp::Ordering {
-    a.partial_cmp(&b).unwrap_or(core::cmp::Ordering::Equal)
-}
-
 /// One directory listing as flat buffers — the shape the host hands over.
 pub struct Listing<'a> {
     pub names: &'a [u8],
@@ -196,13 +191,34 @@ fn prefix(name: &[u8], case_sensitive: bool) -> u64 {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Key {
+    /// The sort key itself when it is a number (size, mtime), in [`ord_bits`]
+    /// form; `0` for the name sort, which has only the name.
+    primary: u64,
     prefix: u64,
     idx: u32,
     group: u8,
     _pad: [u8; 3],
 }
 
-/// Bytes of scratch the host must provide per entry for [`sort_by_name`].
+/// An `f64` as a `u64` whose unsigned order IS the number's order, so the
+/// sort compares integers already in its working set instead of chasing two
+/// indices into `sizes`/`mtimes` per comparison. `-0.0` folds into `+0.0`
+/// (they compare equal as numbers); NaN — never a real size or time — sorts
+/// after everything, where it cannot make the order intransitive.
+#[inline]
+fn ord_bits(x: f64) -> u64 {
+    if x.is_nan() {
+        return u64::MAX;
+    }
+    let bits = (if x == 0.0 { 0.0 } else { x }).to_bits();
+    if bits >> 63 == 1 {
+        !bits
+    } else {
+        bits | 1 << 63
+    }
+}
+
+/// Bytes of scratch the host must provide per entry for [`sort_by_key`].
 pub const SCRATCH_PER_ENTRY: usize = core::mem::size_of::<Key>();
 
 /// How many leading bytes every name shares.
@@ -247,9 +263,11 @@ fn common_prefix(l: &Listing, idx: &[u32], case_sensitive: bool) -> usize {
     lcp
 }
 
-/// The fast path: sorting by name, which is the default and the one a panel
-/// pays for on every directory it opens.
-fn sort_by_name(l: &Listing, opts: u32, idx: &mut [u32], keys: &mut [Key]) {
+/// The fast path: name, size and mtime — the name sort a panel pays for on
+/// every directory it opens, and the two numeric sorts that tie-break on it.
+/// Everything a comparison needs sits in the `Key`, so only a genuine tie on
+/// value AND eight name bytes reaches back into the name buffer.
+fn sort_by_key(l: &Listing, key: u32, opts: u32, idx: &mut [u32], keys: &mut [Key]) {
     let reverse = opts & OPT_REVERSE != 0;
     let dirs_first = opts & OPT_DIRS_FIRST != 0;
     let case_sensitive = opts & OPT_CASE_SENSITIVE != 0;
@@ -259,6 +277,11 @@ fn sort_by_name(l: &Listing, opts: u32, idx: &mut [u32], keys: &mut [Key]) {
         let n = i as usize;
         let name = l.name(n);
         *slot = Key {
+            primary: match key {
+                KEY_SIZE => ord_bits(l.sizes[n]),
+                KEY_MTIME => ord_bits(l.mtimes[n]),
+                _ => 0,
+            },
             prefix: prefix(&name[skip.min(name.len())..], case_sensitive),
             idx: i,
             group: group(l.flags[n], dirs_first),
@@ -268,13 +291,15 @@ fn sort_by_name(l: &Listing, opts: u32, idx: &mut [u32], keys: &mut [Key]) {
 
     keys.sort_unstable_by(|a, b| {
         a.group.cmp(&b.group).then_with(|| {
-            let ord = a.prefix.cmp(&b.prefix).then_with(|| {
-                cmp_name(
-                    l.name(a.idx as usize),
-                    l.name(b.idx as usize),
-                    case_sensitive,
-                )
-            });
+            let ord = (a.primary, a.prefix)
+                .cmp(&(b.primary, b.prefix))
+                .then_with(|| {
+                    cmp_name(
+                        l.name(a.idx as usize),
+                        l.name(b.idx as usize),
+                        case_sensitive,
+                    )
+                });
             if reverse {
                 ord.reverse()
             } else {
@@ -295,8 +320,8 @@ fn sort_by_name(l: &Listing, opts: u32, idx: &mut [u32], keys: &mut [Key]) {
 /// detaches every view the host is holding — the panel would pay for a new
 /// page, and the host for a `TypeError`.
 pub fn sort_perm(l: &Listing, key: u32, opts: u32, idx: &mut [u32], keys: &mut [Key]) {
-    if key == KEY_NAME {
-        return sort_by_name(l, opts, idx, keys);
+    if matches!(key, KEY_NAME | KEY_SIZE | KEY_MTIME) {
+        return sort_by_key(l, key, opts, idx, keys);
     }
     let reverse = opts & OPT_REVERSE != 0;
     let dirs_first = opts & OPT_DIRS_FIRST != 0;
@@ -330,13 +355,9 @@ pub fn sort_perm(l: &Listing, key: u32, opts: u32, idx: &mut [u32], keys: &mut [
         let ord = match key {
             KEY_EXT => cmp_name(ext(l.name(a)), ext(l.name(b)), case_sensitive)
                 .then_with(|| cmp_name(l.name(a), l.name(b), case_sensitive)),
-            KEY_SIZE => cmp_f64(l.sizes[a], l.sizes[b])
-                .then_with(|| cmp_name(l.name(a), l.name(b), case_sensitive)),
-            KEY_MTIME => cmp_f64(l.mtimes[a], l.mtimes[b])
-                .then_with(|| cmp_name(l.name(a), l.name(b), case_sensitive)),
             KEY_VERSION => cmp_version(l.name(a), l.name(b), case_sensitive),
             KEY_UNSORTED => a.cmp(&b),
-            KEY_NAME | _ => cmp_name(l.name(a), l.name(b), case_sensitive),
+            _ => cmp_name(l.name(a), l.name(b), case_sensitive),
         };
 
         if reverse && key != KEY_UNSORTED {

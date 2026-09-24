@@ -52,7 +52,7 @@ export type OpenResult = {
 };
 
 export async function open(path: string): Promise<OpenResult> {
-  await close();
+  close();
   try {
     const st = await Deno.stat(path);
     if (st.isDirectory) {
@@ -84,7 +84,7 @@ export async function open(path: string): Promise<OpenResult> {
   }
 }
 
-export async function close(): Promise<void> {
+export function close(): void {
   if (!session) return;
   try {
     session.file.close();

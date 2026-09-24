@@ -4,31 +4,11 @@
 import { afterRender, useRef } from "aio/air";
 import { ui } from "../cell/ui.ts";
 import { setOption, submit } from "./commands.ts";
-
-/** What has been typed into the dialog that is open, on the CLIENT.
- *
- *  Not round-tripped per keystroke, and this is the whole point: sending every
- *  character to the server and reading it back is a race that Enter wins.
- *  Typing a path and pressing Enter quickly submitted the value from before the
- *  last few characters — or, on a fast typist, an empty one, which is why
- *  "quick cd does nothing" and "Save as does nothing" looked intermittent.
- *
- *  Keyed by dialog id so a new dialog starts from ITS prefill rather than from
- *  the last one's text. */
-let typed: { id: string; value: string } | null = null;
-
-/** The value a submit should act on: what was typed, or the prefill if the
- *  dialog was accepted untouched. */
-export function dialogValue(): string {
-  const d = ui.dialog;
-  if (!d) return "";
-  return typed && typed.id === d.id ? typed.value : d.value;
-}
-
-/** Forget it — on close, and whenever a different dialog opens. */
-export function clearDialogValue(): void {
-  typed = null;
-}
+import {
+  clearDialogValue,
+  heldForOther,
+  setDialogValue,
+} from "./dialogValue.ts";
 
 export function Dialog() {
   const input = useRef<HTMLInputElement | null>(null);
@@ -61,7 +41,7 @@ export function Dialog() {
     clearDialogValue();
     return null;
   }
-  if (typed && typed.id !== d.id) clearDialogValue();
+  if (heldForOther(d.id)) clearDialogValue();
 
   return (
     <div class="modal-scrim" onClick={() => ui.close()}>
@@ -83,10 +63,7 @@ export function Dialog() {
               ref={input}
               value={d.value}
               onInput={(e: Event) => {
-                typed = {
-                  id: d.id,
-                  value: (e.target as HTMLInputElement).value,
-                };
+                setDialogValue(d.id, (e.target as HTMLInputElement).value);
               }}
             />
           </label>

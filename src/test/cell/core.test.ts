@@ -460,3 +460,64 @@ Deno.test("countBinary separates text from binary", () => {
   assertEquals(countBinary(bytes("plain text\nwith newlines\t")), 0);
   assertEquals(countBinary(new Uint8Array([0, 1, 2, 65, 66])), 3);
 });
+
+Deno.test("sort: size and mtime agree with the oracle on random listings", () => {
+  // The numeric keys share the name sort's packed-key path; this pins that the
+  // packing changes nothing about the order: value, then name, reversed within
+  // the groups, `..` and directories pinned where mc pins them.
+  const enc = new TextEncoder();
+  const fold = (b: number) => (b >= 65 && b <= 90 ? b + 32 : b);
+  const cmpBytes = (x: Uint8Array, y: Uint8Array, cs: boolean) => {
+    const n = Math.min(x.length, y.length);
+    if (!cs) {
+      for (let i = 0; i < n; i++) {
+        const d = fold(x[i]!) - fold(y[i]!);
+        if (d !== 0) return d;
+      }
+    }
+    for (let i = 0; i < n; i++) if (x[i] !== y[i]) return x[i]! - y[i]!;
+    return x.length - y.length;
+  };
+  let seed = 7;
+  const rnd = (n: number) => (seed = (seed * 48271) % 0x7fffffff) % n;
+  const stems = ["IMG_2024-11-08_", "a", "B", "entry-", "Ω-", ""];
+  for (let round = 0; round < 40; round++) {
+    // Unique names: a directory never holds two, and two rows equal on every
+    // key would be free to swap.
+    const unique = new Set<string>();
+    while (unique.size < 60) {
+      unique.add(`${stems[rnd(stems.length)]}${rnd(99)}`);
+    }
+    const list = [
+      e("..", { kind: "dir" }),
+      ...[...unique].map((name) =>
+        e(name, {
+          kind: rnd(4) === 0 ? "dir" : "file",
+          size: [0, -0, 5, 5, 1e12, 3.5][rnd(6)]!,
+          mtime: rnd(3) === 0 ? -rnd(1000) : rnd(1000),
+        })
+      ),
+    ];
+    for (const key of ["size", "mtime"] as const) {
+      for (const reverse of [false, true]) {
+        for (const caseSensitive of [false, true]) {
+          const o = { key, reverse, dirsFirst: round % 2 === 0, caseSensitive };
+          const group = (x: FileEntry) =>
+            x.name === ".." ? 0 : o.dirsFirst && x.kind === "dir" ? 1 : 2;
+          const want = list.map((_, i) => i).sort((a, b) => {
+            const [x, y] = [list[a]!, list[b]!];
+            const g = group(x) - group(y);
+            if (g !== 0) return g;
+            const v = key === "size" ? x.size - y.size : x.mtime - y.mtime;
+            const ord = v !== 0
+              ? Math.sign(v)
+              : cmpBytes(enc.encode(x.name), enc.encode(y.name), caseSensitive);
+            return reverse ? -ord : ord;
+          });
+          const got = [...sortIndex(list, o)];
+          assertEquals(got, want, `round ${round} ${JSON.stringify(o)}`);
+        }
+      }
+    }
+  }
+});

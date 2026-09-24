@@ -80,7 +80,13 @@ Deno.test("markable refuses ..", () => {
 });
 
 Deno.test("derive keeps rows, counts and totals in agreement", () => {
-  const p = { all: listing, marked: ["b"], cursor: 4, offset: 0, viewport: 2 };
+  const p = {
+    all: listing,
+    markedNames: ["b"],
+    cursor: 4,
+    offset: 0,
+    viewport: 2,
+  };
   const d = derive(p);
   assertEquals(d.count, 5);
   assertEquals(d.cursor, 4);
@@ -94,7 +100,7 @@ Deno.test("derive with keepName follows the file across a refresh", () => {
   const shrunk = [file(".."), file("c", 30), file("d", 40)];
   const d = derive({
     all: shrunk,
-    marked: [],
+    markedNames: [],
     cursor: 3,
     offset: 0,
     viewport: 5,

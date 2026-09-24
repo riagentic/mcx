@@ -368,6 +368,7 @@ Deno.test("M-t sorts the selected block and undo puts it back", () =>
     await editor.moveTo(2, 1, true); // select the first three lines
     await editor.transformBlock("sort");
     assertEquals(editor.rows.slice(0, 4), ["a", "b", "c", "keep"]);
+    assertEquals(ui.status, "3 lines → 3"); // the block's lines, not an arity
     await editor.undoEdit();
     assertEquals(editor.rows.slice(0, 4), ["c", "a", "b", "keep"]);
   }));
@@ -412,4 +413,15 @@ Deno.test("a command that fails leaves the block alone and says why", () =>
       ui.status.includes("exit 3") || ui.status.includes("exited"),
       ui.status,
     );
+  }));
+
+Deno.test("an edit that lands during a save stays unsaved", () =>
+  withFile("a\n", async (path) => {
+    await editor.setViewport(10);
+    await editor.open(path);
+    const saving = editor.save();
+    await editor.insert("b"); // lands while the write is in flight
+    await saving;
+    assertEquals(await Deno.readTextFile(path), "a\n");
+    assertEquals(editor.modified, true); // "b" is not on disk
   }));

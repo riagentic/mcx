@@ -147,7 +147,7 @@ export const fileops = cell("fileops", {
     /** F5/F6. `move` renames when it can and falls back to copy+delete when the
      *  destination is on another filesystem. */
     async run(
-      s: FileopsState & Partial<MethodDraftMeta>,
+      s: FileopsState & MethodDraftMeta,
       kind: "copy" | "move",
       sources: string[],
       dest: string,
@@ -169,10 +169,10 @@ export const fileops = cell("fileops", {
 
       /** The live draft of this job. Re-read after every await: each one is a
        *  commit point, and another dispatch may have added or removed jobs. */
-      const at = (): Job | undefined => s.jobs.find((j) => j.id === id);
+      const at = (): Job | undefined => s.jobs.find((j) => j.id === id); // aio-ok
 
       const items = await io.walk(sources, ac.signal);
-      const scanned = at(); // aiol-ok: re-read after await
+      const scanned = at(); // aio-ok: re-read after await
       if (!scanned || ac.signal.aborted) return void finish(s, id, [], true);
       scanned.totalFiles = items.length;
       scanned.totalBytes = io.totalBytes(items);
@@ -209,7 +209,7 @@ export const fileops = cell("fileops", {
           );
           const a = await waiting;
           resolvers.delete(id);
-          const after = at(); // aiol-ok: re-read after await
+          const after = at(); // aio-ok: re-read after await
           if (after) after.question = null;
           return a === "retry"
             ? "retry"
@@ -264,7 +264,7 @@ export const fileops = cell("fileops", {
           );
           const a = await waiting;
           resolvers.delete(id);
-          const after = at(); // aiol-ok: re-read after await
+          const after = at(); // aio-ok: re-read after await
           if (after) after.question = null;
           const p = POLICY[a];
           if (p) {
@@ -281,6 +281,7 @@ export const fileops = cell("fileops", {
             case "append":
               return { action: "append", from: 0 };
             case "reget":
+              // aio-ok: `c` is the conflict the engine asked about, not state
               return { action: "append", from: c.dstSize };
             default:
               return guard({ action: "overwrite" });
@@ -288,7 +289,7 @@ export const fileops = cell("fileops", {
         },
       });
 
-      const done = at(); // aiol-ok: re-read after await
+      const done = at(); // aio-ok: re-read after await
       const label = `${kind === "copy" ? "Copied" : "Moved"} ${
         done?.doneFiles ?? 0
       } of ${done?.totalFiles ?? 0}`;
@@ -318,12 +319,12 @@ export const fileops = cell("fileops", {
       s.jobs = [...s.jobs, job];
       s.front = job.id;
       const id = job.id;
-      const at = () => s.jobs.find((j) => j.id === id);
+      const at = (): Job | undefined => s.jobs.find((j) => j.id === id); // aio-ok
 
       const errors: string[] = [];
       for (const [i, src] of sources.entries()) {
         if (ac.signal.aborted) break;
-        const j = at(); // aiol-ok: re-read after await
+        const j = at(); // aio-ok: re-read after await
         if (!j) break;
         j.current = src;
         j.doneFiles = i;
@@ -366,7 +367,7 @@ export const fileops = cell("fileops", {
     /** F8. Deletes are not progress-barred per byte — they are counted, which
      *  is the number that means anything when removing files. */
     async remove(
-      s: FileopsState & Partial<MethodDraftMeta>,
+      s: FileopsState & MethodDraftMeta,
       sources: string[],
     ) {
       if (sources.length === 0) return void ui.say("Nothing selected");
@@ -384,7 +385,7 @@ export const fileops = cell("fileops", {
       s.jobs = [...s.jobs, job];
       s.front = job.id;
       const id = job.id;
-      const at = (): Job | undefined => s.jobs.find((j) => j.id === id);
+      const at = (): Job | undefined => s.jobs.find((j) => j.id === id); // aio-ok
 
       // mc's second delete question, and the reason it exists: "Delete 1 file?"
       // was answered about a NAME, and the name did not say that the directory
@@ -395,7 +396,7 @@ export const fileops = cell("fileops", {
       const errors: string[] = [];
       for (const [i, path] of sources.entries()) {
         if (ac.signal.aborted) break;
-        const j = at(); // aiol-ok: re-read after await
+        const j = at(); // aio-ok: re-read after await
         if (!j) break;
         j.current = path;
         j.doneFiles = i;
@@ -408,7 +409,7 @@ export const fileops = cell("fileops", {
             ? "skip"
             : "cancel";
           if (recurse === null) {
-            const asking = at(); // aiol-ok: re-read after await
+            const asking = at(); // aio-ok: re-read after await
             if (!asking) break;
             asking.question = { kind: "recursive", dst: path };
             const waiting = new Promise<Answer>((r) => resolvers.set(id, r));
@@ -419,7 +420,7 @@ export const fileops = cell("fileops", {
             );
             answer = await waiting;
             resolvers.delete(id);
-            const asked = at(); // aiol-ok: re-read after await
+            const asked = at(); // aio-ok: re-read after await
             if (asked) asked.question = null;
             if (answer === "overwriteAll") recurse = "all";
             if (answer === "skipAll") recurse = "none";
@@ -447,7 +448,11 @@ export const fileops = cell("fileops", {
 
     /** mc's "Don't overwrite with zero length file" — a switch on the operation,
      *  flipped from the dialog that is asking about it. */
-    setZeroGuard(s: FileopsState, on: boolean, id?: string) {
+    setZeroGuard(
+      s: FileopsState,
+      on: boolean,
+      id: string | undefined = undefined,
+    ) {
       const target = id ?? s.front ?? s.jobs.find((j) => j.question)?.id;
       const j = s.jobs.find((x) => x.id === target);
       if (j) j.zeroGuard = on;
@@ -455,7 +460,11 @@ export const fileops = cell("fileops", {
 
     /** The overwrite dialog's answer, for the job it belongs to (the one in
      *  front, unless the caller names another). */
-    answerQuestion(s: FileopsState, a: Answer, id?: string) {
+    answerQuestion(
+      s: FileopsState,
+      a: Answer,
+      id: string | undefined = undefined,
+    ) {
       const target = id ?? s.front ??
         s.jobs.find((j) => j.question !== null)?.id;
       if (!target) return;
@@ -466,7 +475,7 @@ export const fileops = cell("fileops", {
 
     /** Cancel: abort the job, and clear its dialog immediately so the button
      *  feels connected to something. Without an id, the job in front. */
-    cancel(s: FileopsState, id?: string) {
+    cancel(s: FileopsState, id: string | undefined = undefined) {
       const target = id ?? s.front ?? s.jobs[0]?.id;
       if (!target) return;
       controllers.get(target)?.abort();

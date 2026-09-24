@@ -25,7 +25,7 @@ let subshell: {
  *  enough that a command cannot print it by accident. */
 const SENTINEL = "__mcx_done_9f3a__";
 
-async function startSubshell(cwd: string): Promise<typeof subshell> {
+function startSubshell(cwd: string): typeof subshell {
   const shell = Deno.env.get("SHELL") || "/bin/sh";
   try {
     const child = new Deno.Command(shell, {
@@ -74,7 +74,7 @@ export async function runPersistent(
   onLine: (l: Line) => void,
   signal: AbortSignal,
 ): Promise<{ code: number; cwd: string } | null> {
-  const sh = subshell ?? await startSubshell(cwd);
+  const sh = subshell ?? startSubshell(cwd);
   if (!sh) return null;
 
   const dec = new TextDecoder();
@@ -241,10 +241,10 @@ export async function captureToFile(
 
 /** Start something and do not wait for it — a file association usually opens a
  *  window of its own, and holding the panel until it closes would be wrong. */
-export async function spawnDetached(
+export function spawnDetached(
   command: string,
   cwd: string,
-): Promise<void> {
+): void {
   const shell = Deno.env.get("SHELL") || "/bin/sh";
   try {
     const child = new Deno.Command(shell, {

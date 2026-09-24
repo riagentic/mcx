@@ -11,7 +11,7 @@ import {
   humanSize,
 } from "../lib/format.ts";
 import type { PanelSide } from "../type/panel.ts";
-import { ROW_H } from "./Panel.tsx";
+import { ROW_H } from "./metrics.ts";
 
 const other = (s: PanelSide): PanelSide => (s === "left" ? "right" : "left");
 

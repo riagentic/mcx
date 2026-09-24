@@ -90,6 +90,10 @@ type EditorState = {
 /** Bounded so a long session cannot grow without limit. mcedit's default is
  *  smaller; this is one that survives a careless paste. */
 const UNDO_LIMIT = 200;
+
+/** `localeCompare`'s order, with the collator built once at load: building
+ *  it inside M-t cost a cold keystroke ~9ms before a single line was sorted. */
+const collate = new Intl.Collator().compare;
 /** Refusal threshold. Above this the viewer is the honest answer. */
 const MAX_EDIT_BYTES = 32 * 1024 * 1024;
 
@@ -315,19 +319,20 @@ export const editor = cell("editor", {
 
     /** F2. Writes through a temp file + rename, so an interrupted save cannot
      *  leave a truncated original behind. */
-    async save(s: EditorState, path?: string) {
+    async save(s: EditorState, path = "") {
+      // The text is fixed before the first await: that is what lands on disk.
       const target = path || s.path;
+      const text = joinLines(s.doc, s.trailingNewline);
       const io = await import("./editor.server.ts");
-      const err = await io.write(
-        target,
-        joinLines(s.doc, s.trailingNewline),
-      );
+      const err = await io.write(target, text);
       if (err) {
         s.error = err;
         return void ui.say(`Cannot save: ${err}`);
       }
       s.path = target;
-      s.modified = false;
+      // aio-ok: a keystroke that landed during the write is NOT on disk, and
+      // clearing `modified` over it would let the next close lose it.
+      s.modified = joinLines(s.doc, s.trailingNewline) !== text;
       ui.say(`Saved ${basename(target)}`);
     },
 
@@ -550,18 +555,18 @@ export const editor = cell("editor", {
       } else if (how === "format") {
         result = reflow(lines, 80);
       } else {
-        result = [...lines].sort((x, y) => x.localeCompare(y));
+        result = [...lines].sort(collate);
         if (how === "reverse-sort") result.reverse();
       }
 
-      const q = s; // aiol-ok: no state read crosses the await above
+      const q = s; // aio-ok: no state read crosses the await above
       push(q);
       q.doc = [...q.doc.slice(0, from), ...result, ...q.doc.slice(to + 1)];
       q.anchor = null;
       q.cursor = clampPos(q.doc, { line: from, col: 0 });
       q.modified = true;
       reframe(q);
-      ui.say(`${block.length} lines → ${result.length}`);
+      ui.say(`${lines.length} lines → ${result.length}`);
     },
 
     /** C-f — write the selected block to a file of its own. */
@@ -576,7 +581,7 @@ export const editor = cell("editor", {
     },
 
     /** S-F5 — drop another file in at the cursor. */
-    async insertFile(s: EditorState, path: string) {
+    async insertFile(_s: EditorState, path: string) {
       const io = await import("./editor.server.ts");
       const r = await io.read(path, 8 * 1024 * 1024);
       if (r.error) return void ui.say(`Cannot insert: ${r.error}`);
@@ -591,21 +596,23 @@ export const editor = cell("editor", {
       }
       if (s.modified) return void ui.say("Save first (F2)");
       s.charset = label;
+      const { path } = s;
       const io = await import("./editor.server.ts");
       io.setCharset(label);
       ui.say(charsetName(label));
       // The body, not the method: `editor.open()` here would be a second
       // transaction, reading the charset this one has not committed yet.
-      if (s.path) await applyOpen(s, s.path);
+      if (path) await applyOpen(s, path);
     },
 
     /** M-m — send the file somewhere. mc shells out to a mailer and so does
      *  this; a machine without one says so rather than appearing to send. */
     async mail(s: EditorState, to: string, subject: string) {
       if (s.modified) return void ui.say("Save first (F2)");
+      const { path } = s;
       const io = await import("./editor.server.ts");
-      const err = await io.mail(to, subject || basename(s.path), s.path);
-      ui.say(err ? `Cannot mail: ${err}` : `Sent ${basename(s.path)} to ${to}`);
+      const err = await io.mail(to, subject || basename(path), path);
+      ui.say(err ? `Cannot mail: ${err}` : `Sent ${basename(path)} to ${to}`);
     },
 
     /** C-p — check the word under the cursor. Suggestions come from whichever
@@ -748,17 +755,16 @@ export const editor = cell("editor", {
     async copySelection(s: EditorState) {
       const marked = block(s);
       if (!marked) return void ui.say("Nothing selected");
-      if (s.columnMode) {
-        clipboard = columnText(s.doc, s.anchor!, blockEnd(s));
-        columnClipboard = true;
-        await toSystemClipboard(clipboard);
-        return void ui.say(`Copied a column block`);
-      }
-      const [a, b] = marked;
-      clipboard = textInRange(s.doc, a, b);
-      columnClipboard = false;
-      await toSystemClipboard(clipboard);
-      ui.say(`Copied ${clipboard.length} characters`);
+      const column = s.columnMode;
+      const text = column
+        ? columnText(s.doc, s.anchor!, blockEnd(s))
+        : textInRange(s.doc, ...marked);
+      clipboard = text;
+      columnClipboard = column;
+      await toSystemClipboard(text);
+      ui.say(
+        column ? "Copied a column block" : `Copied ${text.length} characters`,
+      );
     },
 
     /** S-F3 — rectangular selection on or off. Turning it on starts a block
@@ -897,7 +903,7 @@ export const editor = cell("editor", {
      *  text copied in a browser is the thing a user expects to arrive here, and
      *  the editor's own clipboard is what answers when there is no system one
      *  (a headless run, a machine without `xclip`). */
-    async paste(s: EditorState) {
+    async paste(s: EditorState) { // aio-ok: a paste lands where the cursor is now
       const io = await import("./editor.server.ts");
       const outside = await io.clipboardPaste();
       if (outside !== "" && outside !== clipboard) {

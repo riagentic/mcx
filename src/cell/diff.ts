@@ -131,7 +131,7 @@ export const diff = cell("diff", {
 
   methods: {
     /** C-x C-d — compare the file under the cursor in each panel. */
-    async open(s: DiffState, left: string, right: string) {
+    async open(s: DiffState, left: string, right: string) { // aio-ok: post-await reads are own writes or a deliberate dirty check
       const io = await import("./diff.server.ts");
       const [a, b] = await Promise.all([
         io.readLines(left),
@@ -240,20 +240,33 @@ export const diff = cell("diff", {
     },
 
     /** F2 — write back whichever side a merge changed. */
-    async save(s: DiffState) {
-      if (!s.modified) return void ui.say("Nothing to save");
+    async save(s: DiffState) { // aio-ok: post-await reads are own writes or a deliberate dirty check
+      // What gets written is fixed before the first await.
+      const { modified, leftPath, rightPath } = s;
+      if (!modified) return void ui.say("Nothing to save");
+      const left = modified !== "right" ? [...s.leftDoc] : null;
+      const right = modified !== "left" ? [...s.rightDoc] : null;
       const io = await import("./diff.server.ts");
       const errs: string[] = [];
-      if (s.modified === "left" || s.modified === "both") {
-        const e = await io.writeLines(s.leftPath, s.leftDoc);
+      if (left) {
+        const e = await io.writeLines(leftPath, left);
         if (e) errs.push(e);
       }
-      if (s.modified === "right" || s.modified === "both") {
-        const e = await io.writeLines(s.rightPath, s.rightDoc);
+      if (right) {
+        const e = await io.writeLines(rightPath, right);
         if (e) errs.push(e);
       }
       if (errs.length > 0) return void ui.say(`Cannot save: ${errs[0]}`);
-      s.modified = "";
+      // aio-ok: a merge that landed during the write is not on disk — only the
+      // sides still equal to what was written are clean.
+      const clean = (doc: readonly string[], wrote: readonly string[] | null) =>
+        wrote !== null && doc.length === wrote.length &&
+        doc.every((l, i) => l === wrote[i]);
+      const now = s.modified;
+      const l = (now === "left" || now === "both") && !clean(s.leftDoc, left);
+      const r = (now === "right" || now === "both") &&
+        !clean(s.rightDoc, right);
+      s.modified = l && r ? "both" : l ? "left" : r ? "right" : "";
       ui.say("Saved");
     },
 

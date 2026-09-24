@@ -98,7 +98,7 @@ export const markable = (e: FileEntry | undefined): boolean =>
 export function derive(
   p: {
     all: readonly FileEntry[];
-    marked: readonly string[];
+    markedNames: readonly string[];
     cursor: number;
     offset: number;
     viewport: number;
@@ -110,7 +110,7 @@ export function derive(
   rows: RowView[];
   count: number;
 } {
-  const marked = new Set(p.marked);
+  const marked = new Set(p.markedNames);
   const cursor = locate(p.all, keepName ?? null, p.cursor);
   const offset = scrollTo(cursor, p.offset, p.viewport, p.all.length);
   return {

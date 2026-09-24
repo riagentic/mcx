@@ -315,7 +315,7 @@ export async function diskFree(
   // `-T` prints the filesystem type, which mc's info panel shows; it is a GNU
   // extension, so a run without it is the fallback rather than an error.
   let cols = await df("-kPT");
-  let typed = cols.length >= 7;
+  const typed = cols.length >= 7;
   if (!typed) cols = await df("-kP");
   if (cols.length === 0) return empty;
 
@@ -353,7 +353,7 @@ export async function preview(
       await file.read(buf);
       const text = new TextDecoder(undefined, { fatal: false }).decode(buf);
       // A binary file previewed as text is noise; say what it is instead.
-      if (/[\u0000]/.test(text.slice(0, 2048))) return ["(binary file)"];
+      if (text.slice(0, 2048).includes("\0")) return ["(binary file)"];
       return text.split("\n").slice(0, maxLines).map((l) =>
         l.replace(/\r$/, "")
       );

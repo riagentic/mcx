@@ -472,3 +472,16 @@ Deno.test("C-Space on something that is not a directory says so", () =>
     await panels.dirSize();
     assert(ui.status.includes("Not a directory"), ui.status);
   }));
+
+Deno.test("compare drops its marks when a panel moves on mid-compare", () =>
+  withApp(async () => {
+    const other = await Deno.makeTempDir({ prefix: "mcx-cmp-" });
+    await Deno.writeTextFile(`${other}/only-here.txt`, "x");
+    await panels.chdir("right", other);
+    const comparing = panels.compare("thorough");
+    await panels.chdir("left", `${root}/sub`); // lands while compare reads
+    await comparing;
+    assertEquals(panels.left.markedCount, 0);
+    assertEquals(panels.right.markedCount, 0);
+    assert(ui.status.includes("compare again"), ui.status);
+  }));

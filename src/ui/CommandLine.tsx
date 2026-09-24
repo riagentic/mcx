@@ -2,7 +2,6 @@
 
 import { signal } from "aio/air";
 import { panels } from "../cell/panels.ts";
-import { shell } from "../cell/shell.ts";
 import { ui } from "../cell/ui.ts";
 import { tildify } from "../lib/path.ts";
 

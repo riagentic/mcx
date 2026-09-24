@@ -11,10 +11,8 @@ import { tildify } from "../lib/path.ts";
 import type { PanelSide, PanelState } from "../type/panel.ts";
 import { FileRow } from "./FileRow.tsx";
 import { InfoView, QuickView, TreeView } from "./PanelViews.tsx";
+import { ROW_H } from "./metrics.ts";
 
-/** Row height in px — one number, used for both the CSS box and the arithmetic
- *  that decides how many rows fit, so the two cannot disagree. */
-export const ROW_H = 21;
 const MIN_COL_W = 190;
 /** Rows per wheel notch — three is the desktop convention. */
 const WHEEL_ROWS = 3;

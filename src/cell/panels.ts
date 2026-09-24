@@ -43,7 +43,7 @@ const emptyPanel = (path: string): PanelState => ({
   raw: [],
   order: [],
   all: [],
-  marked: [],
+  markedNames: [],
   virtual: [],
   quick: "",
   history: [],
@@ -165,7 +165,7 @@ export const panels = cell("panels", {
       "left.order",
       "left.all",
       "left.rows",
-      "left.marked",
+      "left.markedNames",
       "left.loading",
       "left.error",
       "left.virtual",
@@ -178,7 +178,7 @@ export const panels = cell("panels", {
       "right.order",
       "right.all",
       "right.rows",
-      "right.marked",
+      "right.markedNames",
       "right.loading",
       "right.error",
       "right.virtual",
@@ -196,13 +196,13 @@ export const panels = cell("panels", {
       "left.raw",
       "left.order",
       "left.all",
-      "left.marked",
+      "left.markedNames",
       "left.virtual",
       "left.vfs",
       "right.raw",
       "right.order",
       "right.all",
-      "right.marked",
+      "right.markedNames",
       "right.virtual",
       "right.vfs",
     ],
@@ -228,13 +228,15 @@ export const panels = cell("panels", {
      *  unless a previous session left paths behind, which persistence restores.
      *  Both paths are passed explicitly, for the reason `reload` documents. */
     async boot(s: PanelsState) {
+      // What persistence restored, read before the first await.
+      const [left, right] = [s.left.path, s.right.path];
       // The profile first: `~/.mcx` holds the menu, the associations and the
       // skins, and the first run is where they come from.
       await (await import("./profile.server.ts")).ensureProfile();
       const io = await import("./listing.server.ts");
       ui.setHome(io.homeDir());
-      await panels.reload("left", s.left.path || io.cwd(), "");
-      await panels.reload("right", s.right.path || io.homeDir(), "");
+      await panels.reload("left", left || io.cwd(), "");
+      await panels.reload("right", right || io.homeDir(), "");
     },
 
     /** Re-read a panel's directory from disk, keeping the cursor on the file it
@@ -247,8 +249,8 @@ export const panels = cell("panels", {
     async reload(
       s: PanelsState,
       side: PanelSide,
-      target?: string,
-      keepName?: string,
+      target: string | undefined = undefined,
+      keepName: string | undefined = undefined,
     ) {
       const p = panelOf(s, side, "reload");
       const path = target ?? p.path;
@@ -320,7 +322,7 @@ export const panels = cell("panels", {
       // a hand-built selection to an auto-refresh is unforgivable) — but only
       // for files that still exist.
       const present = new Set(q.raw.map((e) => e.name));
-      q.marked = q.marked.filter((n) => present.has(n));
+      q.markedNames = q.markedNames.filter((n) => present.has(n));
       q.generation++;
       if (plain) remember(q, path);
       Object.assign(q, derive(q, keep));
@@ -400,7 +402,7 @@ export const panels = cell("panels", {
       p.cursor = 0;
       p.offset = 0;
       p.hscroll = 0;
-      p.marked = []; // a new directory starts with nothing selected
+      p.markedNames = []; // a new directory starts with nothing selected
       p.virtual = []; // leaving a panelized view is just navigating away
       p.quick = "";
       setVfs(p, null); // …and so is leaving an archive
@@ -429,16 +431,21 @@ export const panels = cell("panels", {
     /** Enter: directories navigate. Files are the caller's business — the panel
      *  reports what was chosen and stays out of policy. */
     async enter(s: PanelsState): Promise<string | null> {
-      const p = s[s.active];
+      const side = s.active;
+      const p = s[side];
       const e = p.all[p.cursor];
       if (!e) return null;
+      // Everything below is decided by what was under the cursor NOW; the
+      // awaits that follow must not re-read a panel that may have moved on.
+      const dir = p.path;
+      const name = e.name;
       const dirish = e.kind === "dir" ||
         (e.kind === "link" && e.linkKind === "dir");
 
       // Inside an archive, everything is archive navigation.
       if (p.vfs) {
         if (dirish) {
-          await panels.vfsChdir(s.active, e.name);
+          await panels.vfsChdir(side, name);
           return null;
         }
         return null; // a member is opened through `extractCurrent`
@@ -446,30 +453,30 @@ export const panels = cell("panels", {
 
       if (dirish) {
         await panels.chdir(
-          s.active,
-          e.name === UP_DIR
+          side,
+          name === UP_DIR
             ? UP_DIR
-            : isRemote(p.path)
-            ? remoteJoin(p.path, e.name)
-            : entryPath(p.path, e.name),
+            : isRemote(dir)
+            ? remoteJoin(dir, name)
+            : entryPath(dir, name),
         );
         return null;
       }
 
       // A remote file has to be here before anything can open it.
-      if (isRemote(p.path)) {
+      if (isRemote(dir)) {
         const local = await panels.fetchCurrent();
         return local;
       }
 
       // An archive opens as a directory — mc's defining trick.
       const { archiveKind } = await import("./vfs.server.ts");
-      const kind = archiveKind(e.name);
+      const kind = archiveKind(name);
       if (kind) {
-        await panels.openArchive(s.active, entryPath(p.path, e.name), kind);
+        await panels.openArchive(side, entryPath(dir, name), kind);
         return null;
       }
-      return entryPath(p.path, e.name);
+      return entryPath(dir, name);
     },
 
     /** Enter an archive. The panel's `path` becomes `archive#inner`, which is
@@ -483,7 +490,7 @@ export const panels = cell("panels", {
       const p = panelOf(s, side, "openArchive");
       setVfs(p, { archive, kind, inner: "" });
       p.virtual = [];
-      p.marked = [];
+      p.markedNames = [];
       await panels.reload(side, `${archive}#`, "");
     },
 
@@ -498,7 +505,7 @@ export const panels = cell("panels", {
         if (inner === "") {
           const dir = dirname(archive);
           setVfs(p, null);
-          p.marked = [];
+          p.markedNames = [];
           await panels.reload(side, dir, basename(archive));
           return;
         }
@@ -507,14 +514,14 @@ export const panels = cell("panels", {
           : "";
         const leaving = basename(inner);
         setVfs(p, { archive, kind, inner: up });
-        p.marked = [];
+        p.markedNames = [];
         await panels.reload(side, `${archive}#${up}`, leaving);
         return;
       }
 
       const next = inner ? `${inner}/${name}` : name;
       setVfs(p, { archive, kind, inner: next });
-      p.marked = [];
+      p.markedNames = [];
       await panels.reload(side, `${archive}#${next}`, "");
     },
 
@@ -529,7 +536,7 @@ export const panels = cell("panels", {
       s[s.active].loading = true;
       const io = await import("./remote.server.ts");
       const r = await io.fetchToTemp(remote, e.name);
-      s[s.active].loading = false; // aiol-ok: re-read after await
+      s[s.active].loading = false; // aio-ok: re-read after await
       if (r.error) {
         ui.say(`Cannot fetch ${e.name}: ${r.error}`);
         return null;
@@ -569,8 +576,8 @@ export const panels = cell("panels", {
       const p = s[s.active];
       if (!p.vfs) return { paths: [], failed: 0 };
       const { archive, kind, inner } = p.vfs;
-      const names = p.marked.length > 0
-        ? [...p.marked]
+      const names = p.markedNames.length > 0
+        ? [...p.markedNames]
         : [p.all[p.cursor]?.name].filter((n): n is string =>
           !!n && n !== UP_DIR
         );
@@ -637,9 +644,9 @@ export const panels = cell("panels", {
       const p = s[s.active];
       const e = p.all[p.cursor];
       if (markable(e)) {
-        const i = p.marked.indexOf(e!.name);
-        if (i >= 0) p.marked.splice(i, 1);
-        else p.marked.push(e!.name);
+        const i = p.markedNames.indexOf(e!.name);
+        if (i >= 0) p.markedNames.splice(i, 1);
+        else p.markedNames.push(e!.name);
       }
       p.cursor = clamp(p.cursor + delta, 0, Math.max(0, p.all.length - 1));
       Object.assign(p, derive(p));
@@ -659,7 +666,7 @@ export const panels = cell("panels", {
         ? entryPath(p.path, e.name)
         : dirname(p.path);
       await panels.chdir(other(s.active), to);
-      const q = s[s.active]; // aiol-ok: re-read after await
+      const q = s[s.active]; // aio-ok: re-read after await
       q.cursor = clamp(q.cursor + 1, 0, Math.max(0, q.all.length - 1));
       Object.assign(q, derive(q));
     },
@@ -674,10 +681,8 @@ export const panels = cell("panels", {
         return void ui.say("Not a symbolic link");
       }
       const target = resolve(p.path, e.target);
-      await panels.chdir(
-        other(s.active),
-        e.linkKind === "dir" ? target : dirname(target),
-      );
+      const dest = e.linkKind === "dir" ? target : dirname(target);
+      await panels.chdir(other(s.active), dest);
     },
 
     /** The UI reports how many cells fit and in how many columns; the panel
@@ -710,13 +715,13 @@ export const panels = cell("panels", {
 
     /** Insert: toggle the mark and step down, so a run of files marks with one
      *  held key — the mc muscle memory. */
-    toggleMark(s: PanelsState, name?: string) {
+    toggleMark(s: PanelsState, name = "") {
       const p = s[s.active];
       const e = name ? p.all.find((x) => x.name === name) : p.all[p.cursor];
       if (!markable(e)) return;
-      const i = p.marked.indexOf(e!.name);
-      if (i >= 0) p.marked.splice(i, 1);
-      else p.marked.push(e!.name);
+      const i = p.markedNames.indexOf(e!.name);
+      if (i >= 0) p.markedNames.splice(i, 1);
+      else p.markedNames.push(e!.name);
       if (!name) {
         p.cursor = clamp(p.cursor + 1, 0, Math.max(0, p.all.length - 1));
       }
@@ -739,7 +744,7 @@ export const panels = cell("panels", {
       const filesOnly = opts.filesOnly ?? true;
       const fold = !(opts.caseSensitive ?? p.caseSensitive);
       const { globMatch } = await import("./core.server.ts");
-      const set = new Set(p.marked);
+      const set = new Set(p.markedNames);
       for (const e of p.all) {
         if (!markable(e)) continue;
         if (filesOnly && e.kind === "dir") continue;
@@ -747,22 +752,22 @@ export const panels = cell("panels", {
         if (mark) set.add(e.name);
         else set.delete(e.name);
       }
-      p.marked = [...set];
+      p.markedNames = [...set];
       Object.assign(p, derive(p));
     },
 
     invertMarks(s: PanelsState) {
       const p = s[s.active];
-      const set = new Set(p.marked);
-      p.marked = p.all.filter((e) => markable(e) && !set.has(e.name)).map((e) =>
-        e.name
-      );
+      const set = new Set(p.markedNames);
+      p.markedNames = p.all.filter((e) => markable(e) && !set.has(e.name)).map((
+        e,
+      ) => e.name);
       Object.assign(p, derive(p));
     },
 
     unmarkAll(s: PanelsState) {
       const p = s[s.active];
-      p.marked = [];
+      p.markedNames = [];
       Object.assign(p, derive(p));
     },
 
@@ -772,7 +777,7 @@ export const panels = cell("panels", {
       s: PanelsState,
       side: PanelSide,
       key: SortKey,
-      reverse?: boolean,
+      reverse: boolean | undefined = undefined,
     ) {
       const p = panelOf(s, side, "setSort");
       // Re-picking the same key flips direction, exactly like clicking a column.
@@ -861,7 +866,7 @@ export const panels = cell("panels", {
       const p = panelOf(s, side, "rearrange");
       const keep = p.all[p.cursor]?.name ?? null;
       const io = await import("./listing.server.ts");
-      const q = panelOf(s, side, "rearrange"); // aiol-ok: re-read after await
+      const q = panelOf(s, side, "rearrange"); // aio-ok: re-read after await
       applyView(q, io);
       Object.assign(q, derive(q, keep));
     },
@@ -876,7 +881,7 @@ export const panels = cell("panels", {
     ) {
       const p = panelOf(s, side, "panelize");
       p.virtual = paths;
-      p.marked = [];
+      p.markedNames = [];
       p.cursor = 0;
       p.offset = 0;
       await panels.reload(side, label, "");
@@ -933,11 +938,11 @@ export const panels = cell("panels", {
      *  behind. The second half is the reason mc has this command at all —
      *  those are real bytes, and nothing else would ever remove them. */
     async vfsList(s: PanelsState) {
-      const io = await import("./vfs.server.ts");
-      const temps = io.activeTemps();
       const open = [s.left, s.right]
         .filter((p) => p.vfs)
         .map((p) => `${p.vfs!.archive} (open)`);
+      const io = await import("./vfs.server.ts");
+      const temps = io.activeTemps();
       const items = [...open, ...temps.map((t) => `${t} (extracted)`)];
       if (items.length === 0) {
         return void ui.say("No active virtual filesystems");
@@ -957,7 +962,7 @@ export const panels = cell("panels", {
     },
 
     /** The Free button of that list. */
-    async freeVfs(s: PanelsState) {
+    async freeVfs(_s: PanelsState) {
       const io = await import("./vfs.server.ts");
       const n = await io.freeTemps();
       ui.say(n > 0 ? `Freed ${n} extracted copies` : "Nothing to free");
@@ -971,7 +976,11 @@ export const panels = cell("panels", {
      *  tree the interesting behaviour is the first number appearing while the
      *  second is still being counted. */
     async dirSize(s: PanelsState) {
-      const p = s[s.active];
+      // The panel and directory this was asked about, fixed before any await:
+      // a panel that moves on mid-count must not receive its sizes.
+      const side = s.active;
+      const p = s[side];
+      const base = p.path;
       const dirish = (name: string) => {
         const e = p.all.find((x) => x.name === name);
         return !!e && e.name !== UP_DIR &&
@@ -982,8 +991,8 @@ export const panels = cell("panels", {
       // last one is how you ask a directory what its children weigh, and
       // answering "Not a directory" to it was refusing a question mc answers.
       const onUpDir = p.all[p.cursor]?.name === UP_DIR;
-      const names = (p.marked.length > 0
-        ? [...p.marked]
+      const names = (p.markedNames.length > 0
+        ? [...p.markedNames]
         : onUpDir
         ? p.all.map((e) =>
           e.name
@@ -993,13 +1002,17 @@ export const panels = cell("panels", {
 
       if (names.length === 0) return void ui.say("Not a directory");
       const io = await import("./listing.server.ts");
-      const side = s.active;
+      // aio-ok: every read of `s[side]` below is a deliberate re-read, guarded
+      // by the panel still being in `base`.
+      const here = () => s[side].path === base ? s[side] : null;
 
-      s[side].loading = true;
+      const start = here();
+      if (!start) return;
+      start.loading = true;
       for (const name of names) {
-        const dir = entryPath(s[side].path, name); // aiol-ok: fresh each round
-        const size = await io.dirSize(dir);
-        const q = s[side]; // aiol-ok: re-read after await
+        const size = await io.dirSize(entryPath(base, name));
+        const q = here();
+        if (!q) return; // the panel left; its own load owns `loading` now
         for (const e of q.raw) {
           if (e.name === name) {
             e.size = size;
@@ -1014,7 +1027,8 @@ export const panels = cell("panels", {
         }
         Object.assign(q, derive(q));
       }
-      const done = s[side];
+      const done = here();
+      if (!done) return;
       done.loading = false;
       // mc re-sorts when the sizes it just learned are what the panel is sorted
       // by — otherwise the numbers change and the order does not, which reads
@@ -1025,7 +1039,7 @@ export const panels = cell("panels", {
     /** The file after (or before) the cursor in the active panel, skipping
      *  directories: what C-f/C-b in the viewer step through. Moves the panel's
      *  cursor with it, so leaving the viewer leaves you where you stopped. */
-    async neighbourFile(s: PanelsState, delta: number): Promise<string | null> {
+    neighbourFile(s: PanelsState, delta: number): string | null {
       const p = s[s.active];
       for (let i = p.cursor + delta; i >= 0 && i < p.all.length; i += delta) {
         const e = p.all[i]!;
@@ -1043,15 +1057,15 @@ export const panels = cell("panels", {
      *  `marked` never crosses the wire. */
     taggedNames(s: PanelsState, side: PanelSide): string[] {
       const p = panelOf(s, side, "taggedNames");
-      if (p.marked.length > 0) return [...p.marked];
+      if (p.markedNames.length > 0) return [...p.markedNames];
       const e = p.all[p.cursor];
       return e && e.name !== UP_DIR ? [e.name] : [];
     },
 
     selection(s: PanelsState): string[] {
       const p = s[s.active];
-      const names = p.marked.length > 0
-        ? [...p.marked]
+      const names = p.markedNames.length > 0
+        ? [...p.markedNames]
         : [p.all[p.cursor]?.name].filter((n): n is string =>
           !!n && n !== UP_DIR
         );
@@ -1072,7 +1086,7 @@ export const panels = cell("panels", {
      *  - `thorough` — same size and time still get compared byte by byte
      *
      *  Directories are left alone, as mc leaves them. */
-    async compare(s: PanelsState, method: CompareMethod = "quick") {
+    async compare(s: PanelsState, method: CompareMethod = "quick") { // aio-ok: post-await reads follow the moved-on guard
       const index = (p: PanelState) => {
         const m = new Map<string, FileEntry>();
         for (const e of p.all) {
@@ -1081,6 +1095,9 @@ export const panels = cell("panels", {
         return m;
       };
       const [l, r] = [index(s.left), index(s.right)];
+      // Both directories fixed before the first await: the marks belong to
+      // THESE listings, and land only if both panels are still showing them.
+      const [lp, rp] = [s.left.path, s.right.path];
 
       /** mc's `compare_dir`, for one file against its counterpart. */
       const differs = async (
@@ -1116,12 +1133,14 @@ export const panels = cell("panels", {
         return out;
       };
 
-      const [leftMarks, rightMarks] = [
-        await differing(l, r, s.left.path, s.right.path),
-        await differing(r, l, s.right.path, s.left.path),
-      ];
-      s.left.marked = leftMarks;
-      s.right.marked = rightMarks;
+      const leftMarks = await differing(l, r, lp, rp);
+      const rightMarks = await differing(r, l, rp, lp);
+      // aio-ok: the deliberate re-read — did either panel move on meanwhile?
+      if (s.left.path !== lp || s.right.path !== rp) {
+        return void ui.say("A panel changed directory — compare again");
+      }
+      s.left.markedNames = leftMarks;
+      s.right.markedNames = rightMarks;
       Object.assign(s.left, derive(s.left));
       Object.assign(s.right, derive(s.right));
       ui.say(
@@ -1133,10 +1152,8 @@ export const panels = cell("panels", {
 
     /** Alt-i — point the other panel at this one's directory. */
     async syncOther(s: PanelsState) {
-      await panels.chdir(
-        other(s.active),
-        s.active === "left" ? s.left.path : s.right.path,
-      );
+      const { active } = s;
+      await panels.chdir(other(active), s[active].path);
     },
   },
 

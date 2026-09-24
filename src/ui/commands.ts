@@ -18,7 +18,7 @@ import { shellArgs, shellQuote } from "../lib/shell.ts";
 import type { ListMode, PanelSide, SortKey } from "../type/panel.ts";
 import { CHARSETS } from "../lib/charsets.ts";
 import { clearCommandLine, commandLineText } from "./CommandLine.tsx";
-import { dialogValue } from "./Dialog.tsx";
+import { dialogValue } from "./dialogValue.ts";
 import { firstItem, MENUS } from "./menus.ts";
 
 const MODES: ListMode[] = ["brief", "full", "long"];
@@ -858,7 +858,7 @@ export function submit(choice?: string): void | Promise<void> {
     return;
   }
   // `dialogValue()` rather than `d.value`: what the user typed lives on the
-  // client until they submit it (see Dialog.tsx), because a round trip per
+  // client until they submit it (see dialogValue.ts), because a round trip per
   // keystroke is a race that Enter wins.
   const value = choice ??
     (d.kind === "menu" ? d.choices[d.index]?.id ?? "" : dialogValue());

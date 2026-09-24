@@ -456,6 +456,7 @@ export const ui = cell("ui", {
     /** Options → Appearance. The skins in `~/.mcx/skins` — the four mcx seeds
      *  there on first run, and anything the user has added. */
     async listSkins(s: UIState) {
+      const current = s.skin;
       const io = await import("./profile.server.ts");
       const found = await io.skins();
       if (found.length === 0) return void ui.say("No skins in ~/.mcx/skins");
@@ -466,12 +467,12 @@ export const ui = cell("ui", {
           {
             id: "",
             label: "mcx (built in)",
-            hint: s.skin === "" ? "current" : "",
+            hint: current === "" ? "current" : "",
           },
           ...found.map((f) => ({
             id: f.path,
             label: f.name,
-            hint: s.skin === f.name ? "current" : "",
+            hint: current === f.name ? "current" : "",
           })),
         ],
       );

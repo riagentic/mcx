@@ -4,7 +4,7 @@
 import { effect, useDimensions, useRef } from "aio/air";
 import { viewer } from "../cell/viewer.ts";
 import { humanSize } from "../lib/format.ts";
-import { ROW_H } from "./Panel.tsx";
+import { ROW_H } from "./metrics.ts";
 
 const hex2 = (n: number) => n.toString(16).padStart(2, "0");
 const hex8 = (n: number) => n.toString(16).padStart(8, "0");

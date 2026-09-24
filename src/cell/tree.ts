@@ -129,7 +129,7 @@ async function readInto(
 ): Promise<void> {
   const io = await import("./tree.server.ts");
   const kids = await Promise.all(dirs.map((d) => io.subdirs(d, showHidden)));
-  // aiol-ok: writing the result of the IO is the point, and `children` is
+  // aio-ok: writing the result of the IO is the point, and `children` is
   // keyed by path — a concurrent read of another branch cannot collide.
   for (const [i, dir] of dirs.entries()) s.children[dir] = kids[i]!;
 }
@@ -138,7 +138,11 @@ export const tree = cell("tree", {
   // What you opened is worth restoring; what it contained is not — the disk
   // has moved on since.
   persist: { exclude: ["children", "nodes", "rows", "loading"] },
+  // Hidden for SIZE, not secrecy: the whole tree is O(disk), the window is
+  // O(viewport). Every method is the UI's own keystroke, so calls are open
+  // on purpose — the same as every other mcx cell.
   visible: { exclude: ["children", "nodes"] },
+  access: () => true,
 
   state: {
     root: "/",
@@ -175,7 +179,7 @@ export const tree = cell("tree", {
 
     /** Show the tree with `path` revealed and selected — what switching a panel
      *  into tree view means. Every ancestor is opened on the way down. */
-    async reveal(s: TreeState, path: string) {
+    async reveal(s: TreeState, path: string) { // aio-ok: the open set is extended as it is now
       // Read before the first await — every await is a commit point.
       const { root, showHidden } = s;
       const chain = ancestors(root, path);
@@ -184,7 +188,9 @@ export const tree = cell("tree", {
       await readInto(s, chain, showHidden);
 
       // Every ancestor opens; `path` itself does not, unless it already was —
-      // revealing a directory should not also unfold it.
+      // revealing a directory should not also unfold it. Added to the set as
+      // it is NOW, which is the point of re-reading it here.
+      // aio-ok
       for (const dir of chain.slice(0, -1)) {
         if (!s.expanded.includes(dir)) s.expanded.push(dir);
       }
@@ -199,6 +205,7 @@ export const tree = cell("tree", {
     async expand(s: TreeState, path: string) {
       if (!path) return;
       if (!s.children[path]) await readInto(s, [path], s.showHidden);
+      // aio-ok: added to the open set as it is now, not as it was
       if (!s.expanded.includes(path)) s.expanded.push(path);
       reframe(s);
     },
@@ -209,7 +216,7 @@ export const tree = cell("tree", {
     },
 
     /** `+` / `-` / Left / Right / Space on the row under the cursor. */
-    async toggle(s: TreeState, index?: number) {
+    async toggle(s: TreeState, index: number | undefined = undefined) {
       const node = s.nodes[index ?? s.cursor];
       if (!node) return;
       if (node.open) tree.collapse(node.path);
@@ -258,10 +265,11 @@ export const tree = cell("tree", {
      *  has moved on. */
     async reread(s: TreeState) {
       const open = [s.root, ...s.expanded];
+      const { showHidden } = s;
       s.children = {};
       const io = await import("./tree.server.ts");
       for (const dir of open) {
-        s.children[dir] = await io.subdirs(dir, s.showHidden);
+        s.children[dir] = await io.subdirs(dir, showHidden);
       }
       reframe(s);
       ui.say("Tree re-read");

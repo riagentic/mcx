@@ -4,7 +4,7 @@
 import { effect, useDimensions, useRef } from "aio/air";
 import { editor } from "../cell/editor.ts";
 import { langOf, tokenize } from "../lib/syntax.ts";
-import { ROW_H } from "./Panel.tsx";
+import { ROW_H } from "./metrics.ts";
 
 /** Tabs and trailing spaces made visible (M-_): the two things that are
  *  invisible in a text file and matter in half of them. Only for display — the

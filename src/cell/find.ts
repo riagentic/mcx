@@ -111,13 +111,27 @@ export const find = cell("find", {
     },
 
     async start(
-      s: FindState & Partial<MethodDraftMeta>,
+      s: FindState & MethodDraftMeta,
       root: string,
       mask: string,
       content: string,
     ) {
+      // The dialog's switches as they are when Enter was pressed.
+      const opts = {
+        root,
+        mask: mask || "*",
+        content,
+        caseInsensitive: s.caseInsensitive,
+        contentCaseInsensitive: s.contentCaseInsensitive,
+        skipHidden: s.skipHidden,
+        recursive: s.recursive,
+        followSymlinks: s.followSymlinks,
+        wholeWords: s.wholeWords,
+        firstHit: s.firstHit,
+        limit: LIMIT,
+      };
       const io = await import("./find.server.ts");
-      if (s.$signal!.aborted) return;
+      if (s.$signal.aborted) return;
 
       Object.assign(s, {
         root,
@@ -139,28 +153,18 @@ export const find = cell("find", {
         s.hits = [...s.hits, ...pending];
         pending = [];
       };
+      // aio-ok: a flush timer scoped to this call, cleared in `finally` — not a
+      // schedule other code could observe or cancel.
       const timer = setInterval(flush, 100);
 
       try {
         const n = await io.find(
-          {
-            root,
-            mask: mask || "*",
-            content,
-            caseInsensitive: s.caseInsensitive,
-            contentCaseInsensitive: s.contentCaseInsensitive,
-            skipHidden: s.skipHidden,
-            recursive: s.recursive,
-            followSymlinks: s.followSymlinks,
-            wholeWords: s.wholeWords,
-            firstHit: s.firstHit,
-            limit: LIMIT,
-          },
+          opts,
           (h) => pending.push(h),
           (dir) => {
             s.scanning = dir;
           },
-          s.$signal!,
+          s.$signal,
         );
         s.truncated = n >= LIMIT;
       } finally {
@@ -170,6 +174,7 @@ export const find = cell("find", {
         s.scanning = "";
       }
 
+      // aio-ok: the finished result, read back once the scan is over.
       ui.say(
         s.hits.length === 0
           ? `Nothing matched ${mask || "*"}`
@@ -191,7 +196,7 @@ export const find = cell("find", {
     },
 
     /** Enter: take the active panel to the hit and put the cursor on it. */
-    async goto(s: FindState, index?: number) {
+    async goto(s: FindState, index: number | undefined = undefined) {
       const hit = s.hits[index ?? s.cursor];
       if (!hit) return;
       s.visible = false;
@@ -208,11 +213,12 @@ export const find = cell("find", {
     async panelize(s: FindState) {
       if (s.hits.length === 0) return void ui.say("Nothing to panelize");
       s.visible = false;
-      await panels.panelize(
+      const [side, paths, label] = [
         panels.active,
         s.hits.map((h) => h.path),
         `find:${s.mask}`,
-      );
+      ];
+      await panels.panelize(side, paths, label);
     },
   },
 });

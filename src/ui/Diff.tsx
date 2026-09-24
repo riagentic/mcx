@@ -4,7 +4,7 @@
 import { effect, useDimensions, useRef } from "aio/air";
 import { diff } from "../cell/diff.ts";
 import type { DiffRow } from "../lib/diff.ts";
-import { ROW_H } from "./Panel.tsx";
+import { ROW_H } from "./metrics.ts";
 
 /** mc's gutter marks: what happened to this line, in one character. */
 const SYMBOL: Record<DiffRow["kind"], string> = {
